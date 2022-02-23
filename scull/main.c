@@ -1,4 +1,3 @@
-
 /*
  * main.c -- the bare scull char module
  *
@@ -16,6 +15,10 @@
  *
  */
 
+#include <linux/module.h>
+#include <linux/init.h>
+
+#include <linux/cdev.h>
 #include <linux/fs.h>    /* everything... */
 
 #include "scull.h"
@@ -27,6 +30,56 @@
 int scull_major =   SCULL_MAJOR;
 int scull_minor =   0;
 int scull_nr_devs = SCULL_NR_DEVS;    /* number of bare scull devices */
+int scull_quantum = SCULL_QUANTUM;
+int scull_qset =    SCULL_QSET;
+
+MODULE_AUTHOR("Alessandro Rubini, Jonathan Corbet");
+MODULE_LICENSE("Dual BSD/GPL");
+
+struct scull_dev *scull_devs;         /* allocated in scull_init_module */
+
+struct file_operations scull_fops = {
+    .owner =    THIS_MODULE,
+    /* .llseek =   scull_llseek, */
+    /* .read =     scull_read, */
+    /* .write =    scull_write, */
+    /* .ioctl =    scull_ioctl, */
+    /* .open =     scull_open, */
+    /* .release =  scull_release, */
+};
+
+
+/*
+ * The cleanup function is used to handle initialization failures as well.
+ * Thefore, it must be careful to work correctly even if some of the items
+ * have not been initialized
+ */
+void scull_cleanup_module(void)
+{
+    int i;
+    dev_t devno = MKDEV(scull_major, scull_minor);
+
+    /* cleanup_module is never called if registering failed */
+    unregister_chrdev_region(devno, scull_nr_devs);
+
+    printk(KERN_ALERT "bye scull!\n");
+}
+
+/*
+ * Set up the char_dev structure for this device.
+ */
+static void scull_setup_cdev(struct scull_dev *dev, int index)
+{
+    int err, devno = MKDEV(scull_major, scull_minor + index);
+    
+    cdev_init(&dev->cdev, &scull_fops);
+    dev->cdev.owner = THIS_MODULE;
+    dev->cdev.ops = &scull_fops;
+    err = cdev_add (&dev->cdev, devno, 1);
+    /* Fail gracefully if need be */
+    if (err)
+	printk(KERN_NOTICE "Error %d adding scull%d", err, index);
+}
 
 int scull_init_module(void)
 {
@@ -49,23 +102,31 @@ int scull_init_module(void)
 	return res;
     }
     printk(KERN_ALERT "scull: major %d - minor %d\n", scull_major, scull_minor);
-    return 0;
-}
 
-/*
- * The cleanup function is used to handle initialization failures as well.
- * Thefore, it must be careful to work correctly even if some of the items
- * have not been initialized
- */
-void scull_cleanup_module(void)
-{
-    int i;
-    dev_t devno = MKDEV(scull_major, scull_minor);
+    /* 
+     * allocate the devices -- we can't have them static, as the number
+     * can be specified at load time
+     */
+    scull_devs = kmalloc(scull_nr_devs * sizeof(struct scull_dev), GFP_KERNEL);
+    if (!scull_devs) {
+	res = -ENOMEM;
+	goto fail;  /* Make this more graceful */
+    }
+    memset(scull_devs, 0, scull_nr_devs * sizeof(struct scull_dev));
 
-    /* cleanup_module is never called if registering failed */
-    unregister_chrdev_region(devno, scull_nr_devs);
+    /* Initialize each device. */
+    for (i = 0; i < scull_nr_devs; i++) {
+	scull_devs[i].quantum = scull_quantum;
+	scull_devs[i].qset = scull_qset;
+	init_MUTEX(&scull_devs[i].sem);
+	scull_setup_cdev(&scull_devs[i], i);
+    }
+    
+    return 0; /* succeed */
 
-    printk(KERN_ALERT "bye scull!\n");
+  fail:
+    scull_cleanup_module();
+    return res;
 }
 
 module_init(scull_init_module);

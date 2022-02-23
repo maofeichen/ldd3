@@ -2,8 +2,10 @@
  * Jonathan Corbet, Alessandro Rubini, and Greg Kroah-Hartman. 2005. 
  * <i>Linux Device Drivers, 3rd Edition</i>. O'Reilly Media, Inc.
  */
+
 #include <linux/init.h>
 #include <linux/module.h>
+
 MODULE_LICENSE("Dual BSD/GPL");
 
 static int hello_init(void)
